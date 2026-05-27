@@ -55,6 +55,26 @@ services:
       kafka:
         condition: service_healthy
 
+  # ============================================
+  # Redis - In-memory data store
+  # ============================================
+  redis:
+    image: redis:7-alpine          # Alpine = tiny image (~30MB)
+    container_name: redis
+    ports:
+      - "6379:6379"                # Default Redis port
+    volumes:
+      - redis_data:/data           # Persist data between restarts
+    command: redis-server --appendonly yes
+    # --appendonly yes = write every change to disk (AOF)
+    # Without this, data is ONLY in RAM and lost on restart
+    healthcheck:
+      test: redis-cli ping || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
 # Named volumes persist data between container restarts
 volumes:
   kafka_data:
+  redis_data:
