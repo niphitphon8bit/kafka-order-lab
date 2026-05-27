@@ -30,3 +30,5 @@ Thumbs.db
 
 # Docker volumes
 data/
+inventory-service
+order-service
