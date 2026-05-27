@@ -78,8 +78,11 @@ services:
       KAFKA_BROKERS: kafka:19092    # Internal Docker network address
       KAFKA_TOPIC: orders
       HTTP_PORT: "8080"
+      REDIS_ADDR: redis:6379        # For dashboard read-only access
     depends_on:
       kafka:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: on-failure
 

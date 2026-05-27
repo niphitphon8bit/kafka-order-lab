@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>kafka-order-lab</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    h1 {
+      font-size: 1.8rem;
+      margin-bottom: 0.25rem;
+      color: #f8fafc;
+    }
+
+    .subtitle {
+      color: #64748b;
+      margin-bottom: 2rem;
+      font-size: 0.9rem;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+      max-width: 1000px;
+    }
+
+    .card {
+      background: #1e293b;
+      border-radius: 12px;
+      padding: 1.5rem;
+      border: 1px solid #334155;
+    }
+
+    .card h2 {
+      font-size: 1rem;
+      color: #94a3b8;
+      margin-bottom: 1rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-weight: 600;
+    }
+
+    /* Order Form */
+    .form-group {
+      margin-bottom: 1rem;
+    }
+
+    label {
+      display: block;
+      font-size: 0.85rem;
+      color: #94a3b8;
+      margin-bottom: 0.35rem;
+    }
+
+    select, input[type="number"] {
+      width: 100%;
+      padding: 0.6rem 0.8rem;
+      border-radius: 8px;
+      border: 1px solid #334155;
+      background: #0f172a;
+      color: #e2e8f0;
+      font-size: 0.95rem;
+    }
+
+    select:focus, input:focus {
+      outline: none;
+      border-color: #3b82f6;
+    }
+
+    button {
+      width: 100%;
+      padding: 0.7rem;
+      border-radius: 8px;
+      border: none;
+      background: #3b82f6;
+      color: white;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    button:hover { background: #2563eb; }
+    button:disabled { background: #475569; cursor: not-allowed; }
+
+    /* Stock Table */
+    .stock-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .stock-table th {
+      text-align: left;
+      padding: 0.5rem 0;
+      color: #64748b;
+      font-size: 0.8rem;
+      font-weight: 600;
+      border-bottom: 1px solid #334155;
+    }
+
+    .stock-table td {
+      padding: 0.6rem 0;
+      border-bottom: 1px solid #1e293b;
+    }
+
+    .stock-table .qty {
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .stock-bar-bg {
+      width: 100%;
+      height: 6px;
+      background: #334155;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .stock-bar {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.5s ease;
+    }
+
+    /* Stats */
+    .stat-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+
+    .stat-box {
+      background: #0f172a;
+      border-radius: 8px;
+      padding: 1rem;
+      text-align: center;
+    }
+
+    .stat-value {
+      font-size: 2rem;
+      font-weight: 800;
+      color: #f8fafc;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .stat-label {
+      font-size: 0.75rem;
+      color: #64748b;
+      margin-top: 0.25rem;
+      text-transform: uppercase;
+    }
+
+    .stat-value.success { color: #22c55e; }
+    .stat-value.danger { color: #ef4444; }
+
+    /* Event Log */
+    .log {
+      max-height: 300px;
+      overflow-y: auto;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 0.8rem;
+    }
+
+    .log-entry {
+      padding: 0.5rem 0.7rem;
+      border-radius: 6px;
+      margin-bottom: 0.4rem;
+      background: #0f172a;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .log-entry.success { border-left: 3px solid #22c55e; }
+    .log-entry.error { border-left: 3px solid #ef4444; }
+    .log-entry .time { color: #475569; font-size: 0.7rem; }
+    .log-entry .msg { flex: 1; margin-left: 0.5rem; }
+
+    .full-width { grid-column: 1 / -1; }
+
+    /* Refresh indicator */
+    .refresh-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #22c55e;
+      margin-left: 0.5rem;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+  </style>
+</head>
+<body>
+
+  <h1>kafka-order-lab <span class="refresh-dot"></span></h1>
+  <p class="subtitle">Event-driven microservices dashboard &mdash; Go + Kafka + Redis + Docker</p>
+
+  <div class="grid">
+
+    <!-- Create Order -->
+    <div class="card">
+      <h2>Create Order</h2>
+      <div class="form-group">
+        <label for="item">Item</label>
+        <select id="item">
+          <option value="laptop">Laptop</option>
+          <option value="mouse">Mouse</option>
+          <option value="keyboard">Keyboard</option>
+          <option value="monitor">Monitor</option>
+          <option value="headset">Headset</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="quantity">Quantity</label>
+        <input type="number" id="quantity" value="1" min="1" max="100">
+      </div>
+      <button id="orderBtn" onclick="createOrder()">Place Order</button>
+    </div>
+
+    <!-- Stats -->
+    <div class="card">
+      <h2>Analytics</h2>
+      <div class="stat-grid">
+        <div class="stat-box">
+          <div class="stat-value success" id="totalOrders">0</div>
+          <div class="stat-label">Fulfilled</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value danger" id="failedOrders">0</div>
+          <div class="stat-label">Failed</div>
+        </div>
+      </div>
+      <div style="margin-top: 1rem;">
+        <h2 style="margin-bottom: 0.5rem;">Items Sold</h2>
+        <div id="itemsSold" class="stat-grid" style="grid-template-columns: 1fr 1fr 1fr;">
+        </div>
+      </div>
+    </div>
+
+    <!-- Stock Levels -->
+    <div class="card full-width">
+      <h2>Inventory Stock</h2>
+      <table class="stock-table">
+        <thead>
+          <tr>
+            <th style="width:25%">Item</th>
+            <th style="width:15%">Stock</th>
+            <th>Level</th>
+          </tr>
+        </thead>
+        <tbody id="stockBody">
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Event Log -->
+    <div class="card full-width">
+      <h2>Event Log</h2>
+      <div class="log" id="eventLog">
+        <div class="log-entry" style="color:#475569; text-align:center; border:none;">
+          Waiting for orders...
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+<script>
+  const maxStock = {
+    laptop: 10, mouse: 50, keyboard: 30, monitor: 15, headset: 25
+  };
+
+  const stockColors = {
+    laptop: '#3b82f6', mouse: '#8b5cf6', keyboard: '#22c55e',
+    monitor: '#f59e0b', headset: '#ec4899'
+  };
+
+  let firstLog = true;
+
+  async function createOrder() {
+    const item = document.getElementById('item').value;
+    const quantity = parseInt(document.getElementById('quantity').value);
+    const btn = document.getElementById('orderBtn');
+
+    btn.disabled = true;
+    btn.textContent = 'Sending...';
+
+    try {
+      const res = await fetch('/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item, quantity })
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        addLog('success', `Order ${data.id.slice(0,8)}... created: ${quantity}x ${item}`);
+      } else {
+        addLog('error', `Failed: ${data.error}`);
+      }
+    } catch (err) {
+      addLog('error', `Network error: ${err.message}`);
+    }
+
+    btn.disabled = false;
+    btn.textContent = 'Place Order';
+
+    // Refresh data after a short delay (wait for consumer to process)
+    setTimeout(refreshData, 1000);
+    setTimeout(refreshData, 2500);
+  }
+
+  function addLog(type, message) {
+    const log = document.getElementById('eventLog');
+    if (firstLog) {
+      log.innerHTML = '';
+      firstLog = false;
+    }
+
+    const time = new Date().toLocaleTimeString();
+    const icon = type === 'success' ? '&#10003;' : '&#10007;';
+    const entry = document.createElement('div');
+    entry.className = `log-entry ${type}`;
+    entry.innerHTML = `<span>${icon}</span><span class="msg">${message}</span><span class="time">${time}</span>`;
+    log.prepend(entry);
+
+    // Keep max 20 entries
+    while (log.children.length > 20) log.removeChild(log.lastChild);
+  }
+
+  async function refreshData() {
+    try {
+      // Fetch stock
+      const stockRes = await fetch('/api/stocks');
+      const stocks = await stockRes.json();
+
+      const tbody = document.getElementById('stockBody');
+      tbody.innerHTML = '';
+
+      const items = ['laptop', 'mouse', 'keyboard', 'monitor', 'headset'];
+      for (const item of items) {
+        const qty = stocks[item] ?? 0;
+        const max = maxStock[item] || 50;
+        const pct = Math.max(0, Math.min(100, (qty / max) * 100));
+        const color = stockColors[item] || '#3b82f6';
+        const barColor = pct < 20 ? '#ef4444' : (pct < 50 ? '#f59e0b' : color);
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td style="text-transform:capitalize">${item}</td>
+          <td class="qty">${qty}</td>
+          <td>
+            <div class="stock-bar-bg">
+              <div class="stock-bar" style="width:${pct}%;background:${barColor}"></div>
+            </div>
+          </td>`;
+        tbody.appendChild(tr);
+      }
+
+      // Fetch stats
+      const statsRes = await fetch('/api/stats');
+      const stats = await statsRes.json();
+
+      document.getElementById('totalOrders').textContent = stats.total_orders || 0;
+      document.getElementById('failedOrders').textContent = stats.failed_orders || 0;
+
+      const soldDiv = document.getElementById('itemsSold');
+      soldDiv.innerHTML = '';
+      for (const item of items) {
+        const sold = stats.items_sold?.[item] || 0;
+        if (sold > 0) {
+          soldDiv.innerHTML += `
+            <div class="stat-box">
+              <div class="stat-value" style="font-size:1.3rem;color:${stockColors[item]}">${sold}</div>
+              <div class="stat-label">${item}</div>
+            </div>`;
+        }
+      }
+      if (!soldDiv.innerHTML) {
+        soldDiv.innerHTML = '<div style="color:#475569;grid-column:1/-1;text-align:center;padding:0.5rem;">No items sold yet</div>';
+      }
+
+    } catch (err) {
+      console.error('Failed to refresh:', err);
+    }
+  }
+
+  // Auto-refresh every 3 seconds
+  refreshData();
+  setInterval(refreshData, 3000);
+</script>
+
+</body>
+</html>

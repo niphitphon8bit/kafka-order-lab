@@ -20,6 +20,7 @@ type OrderServiceConfig struct {
 	KafkaBrokers string
 	KafkaTopic   string
 	HTTPPort     string
+	RedisAddr    string
 }
 
 func LoadOrderServiceConfig() OrderServiceConfig {
@@ -27,6 +28,7 @@ func LoadOrderServiceConfig() OrderServiceConfig {
 		KafkaBrokers: getEnv("KAFKA_BROKERS", "localhost:9092"),
 		KafkaTopic:   getEnv("KAFKA_TOPIC", "orders"),
 		HTTPPort:     getEnv("HTTP_PORT", "8080"),
+		RedisAddr:    getEnv("REDIS_ADDR", "localhost:6379"),
 	}
 }
 

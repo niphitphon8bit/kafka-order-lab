@@ -1,6 +1,7 @@
 package main
 
 import (
+	"embed"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -10,12 +11,18 @@ import (
 	"github.com/niphitphon8bit/kafka-order-lab/internal/config"
 	"github.com/niphitphon8bit/kafka-order-lab/internal/kafka"
 	"github.com/niphitphon8bit/kafka-order-lab/internal/models"
+	appredis "github.com/niphitphon8bit/kafka-order-lab/internal/redis"
 )
 
-var producer *kafka.Producer
+//go:embed static
+var staticFiles embed.FS
+
+var (
+	producer    *kafka.Producer
+	redisClient *appredis.Client
+)
 
 func main() {
-	// ---- Load config from environment variables ----
 	cfg := config.LoadOrderServiceConfig()
 
 	// ---- Connect to Kafka ----
@@ -29,12 +36,27 @@ func main() {
 	}
 	defer producer.Close()
 
+	// ---- Connect to Redis (read-only, for dashboard) ----
+	redisClient, err = appredis.NewClient(cfg.RedisAddr)
+	if err != nil {
+		log.Fatalf("Failed to connect to Redis: %v", err)
+	}
+	defer redisClient.Close()
+
 	// ---- HTTP Routes ----
 	mux := http.NewServeMux()
+
+	// API
 	mux.HandleFunc("GET /health", handleHealth)
 	mux.HandleFunc("POST /orders", handleCreateOrder)
+	mux.HandleFunc("GET /api/stocks", handleGetStocks)
+	mux.HandleFunc("GET /api/stats", handleGetStats)
+
+	// Dashboard — serve static HTML
+	mux.Handle("/", http.FileServer(http.FS(staticFiles)))
 
 	log.Printf("Order service starting on :%s", cfg.HTTPPort)
+	log.Printf("Dashboard: http://localhost:%s/static/", cfg.HTTPPort)
 	if err := http.ListenAndServe(":"+cfg.HTTPPort, mux); err != nil {
 		log.Fatal(err)
 	}
@@ -83,4 +105,42 @@ func handleCreateOrder(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(order)
+}
+
+func handleGetStocks(w http.ResponseWriter, r *http.Request) {
+	stocks, err := redisClient.GetAllStock(r.Context())
+	if err != nil {
+		http.Error(w, `{"error":"failed to get stocks"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(stocks)
+}
+
+func handleGetStats(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	totalOrders, _ := redisClient.GetCounter(ctx, "total_orders")
+	failedOrders, _ := redisClient.GetCounter(ctx, "failed_orders")
+	laptops, _ := redisClient.GetCounter(ctx, "items:laptop")
+	mice, _ := redisClient.GetCounter(ctx, "items:mouse")
+	keyboards, _ := redisClient.GetCounter(ctx, "items:keyboard")
+	monitors, _ := redisClient.GetCounter(ctx, "items:monitor")
+	headsets, _ := redisClient.GetCounter(ctx, "items:headset")
+
+	stats := map[string]any{
+		"total_orders":  totalOrders,
+		"failed_orders": failedOrders,
+		"items_sold": map[string]int64{
+			"laptop":   laptops,
+			"mouse":    mice,
+			"keyboard": keyboards,
+			"monitor":  monitors,
+			"headset":  headsets,
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(stats)
 }

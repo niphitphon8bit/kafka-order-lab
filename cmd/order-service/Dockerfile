@@ -8,9 +8,9 @@ WORKDIR /app
 # Copy go.mod first (dependency caching layer)
 # Docker caches each layer. If go.mod hasn't changed,
 # Docker skips re-downloading dependencies on next build.
-COPY go.mod ./
+COPY go.mod go.sum ./
 
-# Download dependencies (none yet, but good practice)
+# Download dependencies
 RUN go mod download
 
 # Copy the rest of the source code
