@@ -7,19 +7,22 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/niphitphon8bit/kafka-order-lab/internal/config"
 	"github.com/niphitphon8bit/kafka-order-lab/internal/kafka"
 	"github.com/niphitphon8bit/kafka-order-lab/internal/models"
 )
 
-// Global producer instance (in a real app, you'd use dependency injection)
 var producer *kafka.Producer
 
 func main() {
+	// ---- Load config from environment variables ----
+	cfg := config.LoadOrderServiceConfig()
+
 	// ---- Connect to Kafka ----
 	var err error
 	producer, err = kafka.NewProducer(
-		[]string{"localhost:9092"}, // Kafka broker address
-		"orders",                   // Topic name
+		[]string{cfg.KafkaBrokers},
+		cfg.KafkaTopic,
 	)
 	if err != nil {
 		log.Fatalf("Failed to create Kafka producer: %v", err)
@@ -31,13 +34,12 @@ func main() {
 	mux.HandleFunc("GET /health", handleHealth)
 	mux.HandleFunc("POST /orders", handleCreateOrder)
 
-	log.Println("Order service starting on :8080")
-	if err := http.ListenAndServe(":8080", mux); err != nil {
+	log.Printf("Order service starting on :%s", cfg.HTTPPort)
+	if err := http.ListenAndServe(":"+cfg.HTTPPort, mux); err != nil {
 		log.Fatal(err)
 	}
 }
 
-// handleHealth returns service status
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
@@ -46,26 +48,18 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleCreateOrder:
-//  1. Parse the request body
-//  2. Create an Order with a unique ID
-//  3. Publish an "order.created" event to Kafka
-//  4. Return the created order to the client
 func handleCreateOrder(w http.ResponseWriter, r *http.Request) {
-	// Step 1: Parse request body
 	var req models.CreateOrderRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
 		return
 	}
 
-	// Validate
 	if req.Item == "" || req.Quantity <= 0 {
 		http.Error(w, `{"error":"item and quantity are required"}`, http.StatusBadRequest)
 		return
 	}
 
-	// Step 2: Create the order
 	order := models.Order{
 		ID:        uuid.New().String(),
 		Item:      req.Item,
@@ -74,14 +68,11 @@ func handleCreateOrder(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: time.Now(),
 	}
 
-	// Step 3: Publish event to Kafka
 	event := models.OrderEvent{
 		EventType: "order.created",
 		Order:     order,
 	}
 
-	// Use order ID as the key — all events for the same order
-	// will go to the same partition (guarantees ordering per order)
 	_, _, err := producer.SendMessage(order.ID, event)
 	if err != nil {
 		log.Printf("Failed to publish order event: %v", err)
@@ -89,7 +80,6 @@ func handleCreateOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 4: Return the created order
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(order)

@@ -1,4 +1,4 @@
-# docker-compose.yml - Infrastructure for kafka-order-lab
+# docker-compose.yml - Full system for kafka-order-lab
 # Run with: docker compose -f deployments/docker-compose.yml up -d
 
 services:
@@ -9,36 +9,45 @@ services:
     image: apache/kafka:3.9.0
     container_name: kafka
     ports:
-      - "9092:9092"       # External access (from your Go app on host)
+      - "9092:9092"       # External access (from host, for debugging)
     environment:
-      # ---- KRaft Mode (replaces Zookeeper) ----
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
-
-      # ---- Listeners ----
-      # PLAINTEXT    = for other containers (internal Docker network)
-      # EXTERNAL     = for your Go app running on host machine
-      # CONTROLLER   = for KRaft internal communication
       KAFKA_LISTENERS: PLAINTEXT://:19092,CONTROLLER://:29093,EXTERNAL://:9092
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:19092,EXTERNAL://localhost:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-
-      # ---- Topic Defaults ----
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-
-      # ---- Cluster ----
       CLUSTER_ID: "4L6g3nShT-eMCtK--X86sw"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
     healthcheck:
       test: /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 || exit 1
       interval: 10s
       timeout: 10s
       retries: 5
       start_period: 30s
+
+  # ============================================
+  # Redis - In-memory data store
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: redis-cli ping || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   # ============================================
   # Kafka UI - Visual tool to inspect topics
@@ -56,25 +65,44 @@ services:
         condition: service_healthy
 
   # ============================================
-  # Redis - In-memory data store
+  # Order Service - HTTP API (Producer)
   # ============================================
-  redis:
-    image: redis:7-alpine          # Alpine = tiny image (~30MB)
-    container_name: redis
+  order-service:
+    build:
+      context: ..                              # Project root (where go.mod is)
+      dockerfile: cmd/order-service/Dockerfile
+    container_name: order-service
     ports:
-      - "6379:6379"                # Default Redis port
-    volumes:
-      - redis_data:/data           # Persist data between restarts
-    command: redis-server --appendonly yes
-    # --appendonly yes = write every change to disk (AOF)
-    # Without this, data is ONLY in RAM and lost on restart
-    healthcheck:
-      test: redis-cli ping || exit 1
-      interval: 10s
-      timeout: 5s
-      retries: 3
+      - "8080:8080"
+    environment:
+      KAFKA_BROKERS: kafka:19092    # Internal Docker network address
+      KAFKA_TOPIC: orders
+      HTTP_PORT: "8080"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: on-failure
 
-# Named volumes persist data between container restarts
+  # ============================================
+  # Inventory Service - Kafka Consumer
+  # ============================================
+  inventory-service:
+    build:
+      context: ..
+      dockerfile: cmd/inventory-service/Dockerfile
+    container_name: inventory-service
+    environment:
+      KAFKA_BROKERS: kafka:19092    # Internal Docker network address
+      KAFKA_TOPIC: orders
+      KAFKA_GROUP_ID: inventory-service
+      REDIS_ADDR: redis:6379        # Internal Docker network address
+    depends_on:
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: on-failure
+
 volumes:
   kafka_data:
   redis_data:

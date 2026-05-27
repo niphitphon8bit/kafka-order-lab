@@ -9,12 +9,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/niphitphon8bit/kafka-order-lab/internal/config"
 	"github.com/niphitphon8bit/kafka-order-lab/internal/kafka"
 	"github.com/niphitphon8bit/kafka-order-lab/internal/models"
 	appredis "github.com/niphitphon8bit/kafka-order-lab/internal/redis"
 )
 
-// Redis client — used for stock, idempotency, and analytics
 var redisClient *appredis.Client
 
 func main() {
@@ -22,16 +22,18 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// ---- Load config from environment variables ----
+	cfg := config.LoadInventoryServiceConfig()
+
 	// ---- Connect to Redis ----
 	var err error
-	redisClient, err = appredis.NewClient("localhost:6379")
+	redisClient, err = appredis.NewClient(cfg.RedisAddr)
 	if err != nil {
 		log.Fatalf("Failed to connect to Redis: %v", err)
 	}
 	defer redisClient.Close()
 
 	// ---- Initialize stock in Redis ----
-	// HSETNX ensures we don't overwrite existing stock on restart
 	initialStock := map[string]int{
 		"laptop":   10,
 		"mouse":    50,
@@ -43,7 +45,6 @@ func main() {
 		log.Fatalf("Failed to initialize stock: %v", err)
 	}
 
-	// Print current stock from Redis
 	stock, _ := redisClient.GetAllStock(ctx)
 	log.Println("=== Current Stock (from Redis) ===")
 	for item, qty := range stock {
@@ -52,9 +53,9 @@ func main() {
 
 	// ---- Create Kafka consumer ----
 	consumer, err := kafka.NewConsumerGroup(
-		[]string{"localhost:9092"},
-		"inventory-service",
-		[]string{"orders"},
+		[]string{cfg.KafkaBrokers},
+		cfg.KafkaGroupID,
+		[]string{cfg.KafkaTopic},
 		handleOrderEvent,
 	)
 	if err != nil {
@@ -87,7 +88,6 @@ func processOrderCreated(order models.Order) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// ---- Step 1: Idempotency check ----
 	processed, err := redisClient.IsProcessed(ctx, order.ID)
 	if err != nil {
 		return fmt.Errorf("idempotency check failed: %w", err)
@@ -97,22 +97,17 @@ func processOrderCreated(order models.Order) error {
 		return nil
 	}
 
-	// ---- Step 2: Check and deduct stock ----
 	newQty, err := redisClient.CheckAndDeductStock(ctx, order.Item, order.Quantity)
 	if err != nil {
 		log.Printf("❌ Order %s: %v", order.ID, err)
-
-		// Update analytics even for failed orders
 		redisClient.IncrementCounter(ctx, "failed_orders", 1)
-		return nil // Don't return error — we handled it, just can't fulfill
+		return nil
 	}
 
-	// ---- Step 3: Mark as processed (24 hour TTL) ----
 	if err := redisClient.MarkProcessed(ctx, order.ID, 24*time.Hour); err != nil {
 		log.Printf("Warning: failed to mark order %s as processed: %v", order.ID, err)
 	}
 
-	// ---- Step 4: Update analytics ----
 	redisClient.IncrementCounter(ctx, "total_orders", 1)
 	redisClient.IncrementCounter(ctx, fmt.Sprintf("items:%s", order.Item), int64(order.Quantity))
 

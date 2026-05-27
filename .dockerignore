@@ -1,0 +1,22 @@
+# Git
+.git
+.gitignore
+
+# Docker
+deployments/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Binaries
+/order-service
+/inventory-service
+
+# Docs
+README.md
+CLAUDE.md

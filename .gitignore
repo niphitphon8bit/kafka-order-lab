@@ -30,5 +30,6 @@ Thumbs.db
 
 # Docker volumes
 data/
-inventory-service
-order-service
+# Compiled binaries at project root
+/inventory-service
+/order-service
