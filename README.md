@@ -181,6 +181,7 @@ Returns analytics counters from Redis.
 | Multi-stage Docker build | Tiny production images (~17MB) |
 | KRaft mode | Modern Kafka without Zookeeper dependency |
 | Embedded static files | Go `embed` serves dashboard from the binary |
+| HTTP vs gRPC vs Kafka | HTTP for external clients, gRPC for internal sync, Kafka for async events (planned) |
 
 ## Learning Roadmap
 
@@ -209,8 +210,11 @@ Returns analytics counters from Redis.
 - [ ] **Race condition in stock check** — `CheckAndDeductStock` has a TOCTOU gap between check and deduct; use a Lua script or Redis transaction for true atomicity
 - [ ] **Schema validation** — validate Kafka message schema (e.g., with JSON Schema or Protobuf) to catch bad data before it enters the pipeline
 
-### Scalability
+### Communication & Scalability
 
+- [ ] **gRPC for internal calls** — replace HTTP between services with gRPC (Protocol Buffers) for fast, type-safe, binary communication; use for sync operations like stock checks before accepting orders
+- [ ] **gRPC streaming** — use server-side streaming for real-time stock level updates instead of polling
+- [ ] **API gateway pattern** — Order Service accepts HTTP from external clients, translates to gRPC for internal service calls
 - [ ] **Multiple consumer instances** — run 2+ inventory-service containers to process partitions in parallel
 - [ ] **Kafka partitioning strategy** — test with more partitions and observe how consumer groups rebalance
 - [ ] **Async Kafka producer** — switch from SyncProducer to AsyncProducer for higher throughput

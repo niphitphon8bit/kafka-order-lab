@@ -65,7 +65,7 @@ services:
         condition: service_healthy
 
   # ============================================
-  # Order Service - HTTP API (Producer)
+  # Order Service - HTTP API (Producer + gRPC client)
   # ============================================
   order-service:
     build:
@@ -78,27 +78,33 @@ services:
       KAFKA_BROKERS: kafka:19092    # Internal Docker network address
       KAFKA_TOPIC: orders
       HTTP_PORT: "8080"
-      REDIS_ADDR: redis:6379        # For dashboard read-only access
+      REDIS_ADDR: redis:6379              # For dashboard read-only access
+      INVENTORY_GRPC_ADDR: inventory-service:50051  # gRPC → Inventory Service
     depends_on:
       kafka:
         condition: service_healthy
       redis:
         condition: service_healthy
+      inventory-service:
+        condition: service_started         # Wait for inventory to be up (gRPC)
     restart: on-failure
 
   # ============================================
-  # Inventory Service - Kafka Consumer
+  # Inventory Service - Kafka Consumer + gRPC Server
   # ============================================
   inventory-service:
     build:
       context: ..
       dockerfile: cmd/inventory-service/Dockerfile
     container_name: inventory-service
+    ports:
+      - "50051:50051"                      # Expose gRPC port (for local debugging)
     environment:
       KAFKA_BROKERS: kafka:19092    # Internal Docker network address
       KAFKA_TOPIC: orders
       KAFKA_GROUP_ID: inventory-service
       REDIS_ADDR: redis:6379        # Internal Docker network address
+      GRPC_PORT: "50051"            # gRPC server port
     depends_on:
       kafka:
         condition: service_healthy

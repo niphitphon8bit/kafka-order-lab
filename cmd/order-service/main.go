@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/niphitphon8bit/kafka-order-lab/internal/config"
+	appgrpc "github.com/niphitphon8bit/kafka-order-lab/internal/grpc"
 	"github.com/niphitphon8bit/kafka-order-lab/internal/kafka"
 	"github.com/niphitphon8bit/kafka-order-lab/internal/models"
 	appredis "github.com/niphitphon8bit/kafka-order-lab/internal/redis"
@@ -18,8 +19,9 @@ import (
 var staticFiles embed.FS
 
 var (
-	producer    *kafka.Producer
-	redisClient *appredis.Client
+	producer        *kafka.Producer
+	redisClient     *appredis.Client
+	inventoryClient *appgrpc.InventoryClient
 )
 
 func main() {
@@ -43,6 +45,13 @@ func main() {
 	}
 	defer redisClient.Close()
 
+	// ---- Connect to Inventory Service via gRPC ----
+	inventoryClient, err = appgrpc.NewInventoryClient(cfg.InventoryGRPCAddr)
+	if err != nil {
+		log.Fatalf("Failed to connect to inventory gRPC: %v", err)
+	}
+	defer inventoryClient.Close()
+
 	// ---- HTTP Routes ----
 	mux := http.NewServeMux()
 
@@ -52,7 +61,7 @@ func main() {
 	mux.HandleFunc("GET /api/stocks", handleGetStocks)
 	mux.HandleFunc("GET /api/stats", handleGetStats)
 
-	// Dashboard — serve static HTML
+	// Dashboard
 	mux.Handle("/", http.FileServer(http.FS(staticFiles)))
 
 	log.Printf("Order service starting on :%s", cfg.HTTPPort)
@@ -70,6 +79,13 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleCreateOrder now checks stock via gRPC BEFORE publishing to Kafka.
+//
+// Flow:
+//  1. Parse & validate input
+//  2. gRPC call → Inventory Service: "Do you have enough stock?"
+//  3. If NO → return 409 Conflict immediately
+//  4. If YES → publish to Kafka and return 201 Created
 func handleCreateOrder(w http.ResponseWriter, r *http.Request) {
 	var req models.CreateOrderRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -82,6 +98,24 @@ func handleCreateOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ---- NEW: Check stock via gRPC ----
+	available, currentStock, msg, err := inventoryClient.CheckStock(r.Context(), req.Item, req.Quantity)
+	if err != nil {
+		// gRPC call failed — log but don't block the order
+		// Fall back to the old behavior (publish anyway, let consumer handle it)
+		log.Printf("Warning: gRPC stock check failed: %v (proceeding anyway)", err)
+	} else if !available {
+		// Not enough stock — reject immediately
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict) // 409
+		json.NewEncoder(w).Encode(map[string]any{
+			"error":         msg,
+			"current_stock": currentStock,
+		})
+		return
+	}
+
+	// ---- Create order ----
 	order := models.Order{
 		ID:        uuid.New().String(),
 		Item:      req.Item,
@@ -95,7 +129,7 @@ func handleCreateOrder(w http.ResponseWriter, r *http.Request) {
 		Order:     order,
 	}
 
-	_, _, err := producer.SendMessage(order.ID, event)
+	_, _, err = producer.SendMessage(order.ID, event)
 	if err != nil {
 		log.Printf("Failed to publish order event: %v", err)
 		http.Error(w, `{"error":"failed to process order"}`, http.StatusInternalServerError)
@@ -113,7 +147,6 @@ func handleGetStocks(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"failed to get stocks"}`, http.StatusInternalServerError)
 		return
 	}
-
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stocks)
 }

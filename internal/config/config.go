@@ -17,27 +17,30 @@ func getEnv(key, defaultValue string) string {
 
 // OrderServiceConfig returns config for the Order Service
 type OrderServiceConfig struct {
-	KafkaBrokers string
-	KafkaTopic   string
-	HTTPPort     string
-	RedisAddr    string
+	KafkaBrokers     string
+	KafkaTopic       string
+	HTTPPort         string
+	RedisAddr        string
+	InventoryGRPCAddr string
 }
 
 func LoadOrderServiceConfig() OrderServiceConfig {
 	return OrderServiceConfig{
-		KafkaBrokers: getEnv("KAFKA_BROKERS", "localhost:9092"),
-		KafkaTopic:   getEnv("KAFKA_TOPIC", "orders"),
-		HTTPPort:     getEnv("HTTP_PORT", "8080"),
-		RedisAddr:    getEnv("REDIS_ADDR", "localhost:6379"),
+		KafkaBrokers:     getEnv("KAFKA_BROKERS", "localhost:9092"),
+		KafkaTopic:       getEnv("KAFKA_TOPIC", "orders"),
+		HTTPPort:         getEnv("HTTP_PORT", "8080"),
+		RedisAddr:        getEnv("REDIS_ADDR", "localhost:6379"),
+		InventoryGRPCAddr: getEnv("INVENTORY_GRPC_ADDR", "localhost:50051"),
 	}
 }
 
 // InventoryServiceConfig returns config for the Inventory Service
 type InventoryServiceConfig struct {
-	KafkaBrokers   string
-	KafkaTopic     string
-	KafkaGroupID   string
-	RedisAddr      string
+	KafkaBrokers string
+	KafkaTopic   string
+	KafkaGroupID string
+	RedisAddr    string
+	GRPCPort     string
 }
 
 func LoadInventoryServiceConfig() InventoryServiceConfig {
@@ -46,5 +49,6 @@ func LoadInventoryServiceConfig() InventoryServiceConfig {
 		KafkaTopic:   getEnv("KAFKA_TOPIC", "orders"),
 		KafkaGroupID: getEnv("KAFKA_GROUP_ID", "inventory-service"),
 		RedisAddr:    getEnv("REDIS_ADDR", "localhost:6379"),
+		GRPCPort:     getEnv("GRPC_PORT", "50051"),
 	}
 }

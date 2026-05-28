@@ -12,11 +12,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Start infrastructure (Kafka, Redis, Kafka UI)
 docker compose -f deployments/docker-compose.yml up -d
 
-# Run order service (producer) — port 8080
-go run ./cmd/order-service/main.go
-
-# Run inventory service (consumer)
+# Run inventory service first (it exposes gRPC on :50051 that order-service needs)
 go run ./cmd/inventory-service/main.go
+
+# Run order service — HTTP :8080, connects to inventory gRPC :50051
+go run ./cmd/order-service/main.go
 
 # Build all binaries
 go build ./...
@@ -24,47 +24,75 @@ go build ./...
 # Run tests
 go test ./...
 
-# Run a single package's tests
-go test ./internal/kafka/...
+# Regenerate protobuf Go code after editing proto/inventory.proto
+protoc --go_out=. --go_opt=paths=source_relative \
+       --go-grpc_out=. --go-grpc_opt=paths=source_relative \
+       proto/inventory.proto
+# Output goes to internal/pb/
 
-# Create an order (test the flow end-to-end)
+# Create an order (end-to-end test)
 curl -X POST http://localhost:8080/orders \
   -H "Content-Type: application/json" \
   -d '{"item":"laptop","quantity":1,"user_id":"user-123"}'
 ```
 
-Kafka UI is available at `http://localhost:8090` when Docker is running.
+Kafka UI: `http://localhost:8090` — Dashboard: `http://localhost:8080/static/`
 
 ## Architecture
 
-Event-driven microservices communicating over Kafka, with Redis for distributed state.
+Hybrid synchronous + asynchronous flow:
 
 ```
-Client → Order Service (HTTP :8080) → Kafka topic "orders" → Inventory Service
-                                                            → Notification Service (not yet implemented)
+Client → Order Service (HTTP :8080)
+              │
+              ├─ gRPC → Inventory Service (:50051)   ← synchronous stock check
+              │         CheckStock: "do you have 1 laptop?"
+              │
+              └─ Kafka topic "orders"                ← async after stock confirmed
+                        │
+                        └─ Inventory Service (consumer group "inventory-service")
+                                  └─ deducts stock in Redis + updates analytics
 ```
 
-**Order Service** (`cmd/order-service/`) — HTTP producer. Accepts `POST /orders`, wraps the request in an `OrderEvent{Type: "order.created"}`, and publishes it to Kafka using the order's UUID as the message key (guarantees per-order ordering within a partition).
+**Order Service** (`cmd/order-service/`) — HTTP producer. On `POST /orders`:
+1. Calls `CheckStock` via gRPC to reject orders immediately if stock is insufficient (409).
+2. Publishes `OrderEvent{Type: "order.created"}` to Kafka with order UUID as message key.
+3. Also serves `GET /api/stocks` and `GET /api/stats` by reading Redis directly.
+4. Embeds and serves `static/index.html` as a web dashboard (`//go:embed static`).
 
-**Inventory Service** (`cmd/inventory-service/`) — Kafka consumer group `"inventory-service"`. On each `order.created` event it:
-1. Checks idempotency via Redis key `processed:{orderID}` (24h TTL) — skips duplicate deliveries.
-2. Atomically deducts stock from Redis HASH `stock:{item}` using `HINCRBY` with a negative delta.
-3. Records analytics in `stats:{counter_name}` string keys (`total_orders`, `failed_orders`, `items:{item}`).
+**Inventory Service** (`cmd/inventory-service/`) — dual role:
+- **gRPC server** on `:50051` — answers `CheckStock` / `GetStock` calls from order-service.
+- **Kafka consumer** — on each `order.created` event: idempotency check → atomic stock deduction → analytics counters.
 
-**Shared packages** under `internal/`:
-- `kafka/producer.go` — Sarama sync producer wrapper; JSON-encodes messages with a string key.
-- `kafka/consumer.go` — Sarama consumer group wrapper; routes messages to a handler `func([]byte) error`.
-- `redis/client.go` — Redis connection; `redis/stock.go` contains all stock and idempotency logic.
-- `models/order.go` — `Order`, `CreateOrderRequest`, `OrderEvent` structs shared by both services.
+**Shared packages under `internal/`:**
+- `config/` — `LoadOrderServiceConfig` / `LoadInventoryServiceConfig`; reads env vars, falls back to localhost defaults.
+- `grpc/server.go` — gRPC server wrapping Redis stock logic; `grpc/client.go` — client used by order-service. **Note:** package is named `grpc`, aliased as `appgrpc` at import sites to avoid collision with `google.golang.org/grpc`.
+- `kafka/` — Sarama producer and consumer group wrappers.
+- `models/order.go` — `Order`, `CreateOrderRequest`, `OrderEvent` shared structs.
+- `pb/` — generated protobuf code; do not edit manually, regenerate with `protoc`.
+- `redis/` — connection client + all stock/idempotency/analytics operations.
+
+## Key env vars (with defaults)
+
+| Var | Default | Used by |
+|-----|---------|---------|
+| `KAFKA_BROKERS` | `localhost:9092` | both |
+| `KAFKA_TOPIC` | `orders` | both |
+| `REDIS_ADDR` | `localhost:6379` | both |
+| `INVENTORY_GRPC_ADDR` | `localhost:50051` | order-service |
+| `GRPC_PORT` | `50051` | inventory-service |
+| `HTTP_PORT` | `8080` | order-service |
+
+Inside Docker containers use `kafka:19092` and `redis:6379`.
 
 ## Infrastructure
 
-Kafka runs in KRaft mode (no Zookeeper). Host applications connect on `localhost:9092`; services inside Docker use `kafka:19092`.
-
-Redis runs with AOF persistence. Inventory service seeds initial stock on startup (laptop×10, mouse×50, keyboard×30, monitor×15, headset×25) — re-running the service resets these values.
+Kafka runs in KRaft mode (no Zookeeper). Redis runs with AOF persistence. Inventory service seeds initial stock on startup (laptop×10, mouse×50, keyboard×30, monitor×15, headset×25) — restarting resets stock to these values.
 
 ## Key dependencies
 
-- `github.com/IBM/sarama` — Kafka client (producer + consumer group)
+- `github.com/IBM/sarama` — Kafka client
 - `github.com/google/uuid` — order ID generation
-- `github.com/redis/go-redis/v9` — Redis client (check go.mod; currently listed as indirect)
+- `github.com/redis/go-redis/v9` — Redis client
+- `google.golang.org/grpc` — gRPC framework
+- `google.golang.org/protobuf` — protobuf runtime

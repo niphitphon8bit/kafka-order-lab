@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package inventory;
+
+// go_package tells protoc where to put the generated Go code
+option go_package = "github.com/niphitphon8bit/kafka-order-lab/internal/pb";
+
+// InventoryService defines the gRPC methods that the
+// Inventory Service exposes to other services.
+//
+// Think of this like a Go interface:
+//   type InventoryService interface {
+//       CheckStock(item string, quantity int) (available bool, currentStock int)
+//       GetAllStock() map[string]int
+//   }
+service InventoryService {
+  // CheckStock verifies if enough stock is available for an item.
+  // Order Service calls this BEFORE publishing to Kafka.
+  rpc CheckStock(CheckStockRequest) returns (CheckStockResponse);
+
+  // GetStock returns the current stock level for all items.
+  rpc GetStock(GetStockRequest) returns (GetStockResponse);
+}
+
+// ---- Request/Response Messages ----
+// These are like Go structs, but defined in a language-neutral format.
+// protoc generates the actual Go structs from these.
+
+message CheckStockRequest {
+  string item = 1;        // field number (not value — used for binary encoding)
+  int32 quantity = 2;
+}
+
+message CheckStockResponse {
+  bool available = 1;       // true if enough stock exists
+  int32 current_stock = 2;  // how many are currently in stock
+  string message = 3;       // human-readable status
+}
+
+message GetStockRequest {
+  // empty — no parameters needed
+}
+
+message StockItem {
+  string item = 1;
+  int32 quantity = 2;
+}
+
+message GetStockResponse {
+  repeated StockItem items = 1;  // "repeated" = list/slice in Go
+}

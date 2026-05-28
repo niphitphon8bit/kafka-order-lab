@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/niphitphon8bit/kafka-order-lab/internal/config"
+	appgrpc "github.com/niphitphon8bit/kafka-order-lab/internal/grpc"
 	"github.com/niphitphon8bit/kafka-order-lab/internal/kafka"
 	"github.com/niphitphon8bit/kafka-order-lab/internal/models"
 	appredis "github.com/niphitphon8bit/kafka-order-lab/internal/redis"
@@ -18,11 +19,9 @@ import (
 var redisClient *appredis.Client
 
 func main() {
-	// ---- Graceful shutdown ----
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// ---- Load config from environment variables ----
 	cfg := config.LoadInventoryServiceConfig()
 
 	// ---- Connect to Redis ----
@@ -33,7 +32,7 @@ func main() {
 	}
 	defer redisClient.Close()
 
-	// ---- Initialize stock in Redis ----
+	// ---- Initialize stock ----
 	initialStock := map[string]int{
 		"laptop":   10,
 		"mouse":    50,
@@ -51,7 +50,15 @@ func main() {
 		log.Printf("  %s: %d", item, qty)
 	}
 
-	// ---- Create Kafka consumer ----
+	// ---- Start gRPC server ----
+	// This runs in a goroutine — Order Service can call CheckStock via gRPC
+	grpcServer, err := appgrpc.Start(cfg.GRPCPort, redisClient)
+	if err != nil {
+		log.Fatalf("Failed to start gRPC server: %v", err)
+	}
+	defer grpcServer.GracefulStop()
+
+	// ---- Start Kafka consumer ----
 	consumer, err := kafka.NewConsumerGroup(
 		[]string{cfg.KafkaBrokers},
 		cfg.KafkaGroupID,
@@ -63,7 +70,7 @@ func main() {
 	}
 	defer consumer.Close()
 
-	// ---- Start consuming ----
+	// ---- Start consuming (blocks until shutdown) ----
 	if err := consumer.Start(ctx); err != nil {
 		log.Fatalf("Consumer error: %v", err)
 	}
