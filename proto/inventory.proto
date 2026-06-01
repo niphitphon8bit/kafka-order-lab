@@ -3,7 +3,7 @@ syntax = "proto3";
 package inventory;
 
 // go_package tells protoc where to put the generated Go code
-option go_package = "github.com/niphitphon8bit/kafka-order-lab/internal/pb";
+option go_package = "github.com/niphitphon8bit/kafka-order-lab/internal/infrastructure/pb";
 
 // InventoryService defines the gRPC methods that the
 // Inventory Service exposes to other services.

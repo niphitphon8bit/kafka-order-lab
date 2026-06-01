@@ -23,3 +23,10 @@ type OrderEvent struct {
 	EventType string `json:"event_type"` // "order.created", "order.cancelled", etc.
 	Order     Order  `json:"order"`
 }
+
+// Stats is the response shape for GET /api/stats
+type Stats struct {
+	TotalOrders  int64            `json:"total_orders"`
+	FailedOrders int64            `json:"failed_orders"`
+	ItemsSold    map[string]int64 `json:"items_sold"`
+}

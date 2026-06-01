@@ -1,4 +1,4 @@
-package grpc
+package inventoryrpc
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/niphitphon8bit/kafka-order-lab/internal/pb"
+	"github.com/niphitphon8bit/kafka-order-lab/internal/infrastructure/pb"
 )
 
 // InventoryClient wraps the generated gRPC client.
