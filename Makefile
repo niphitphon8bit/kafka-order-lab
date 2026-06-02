@@ -23,6 +23,10 @@ build:
 test:
 	go test ./...
 
+## Integration tests — requires Redis on localhost:6379 (uses DB 15, safe to wipe)
+test-integration:
+	go test -tags integration ./internal/infrastructure/store/...
+
 ## Regenerate protobuf Go code after editing proto/inventory.proto
 ## Output location is controlled by go_package in proto/inventory.proto
 ## → internal/infrastructure/pb/
