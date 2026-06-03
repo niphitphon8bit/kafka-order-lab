@@ -1,0 +1,117 @@
+# docker-compose.yml - Full system for kafka-order-lab
+# Run with: docker compose -f deployments/docker-compose.yml up -d
+
+services:
+  # ============================================
+  # Kafka Broker (KRaft mode - no Zookeeper needed)
+  # ============================================
+  kafka:
+    image: apache/kafka:3.9.0
+    container_name: kafka
+    ports:
+      - "9092:9092"       # External access (from host, for debugging)
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_LISTENERS: PLAINTEXT://:19092,CONTROLLER://:29093,EXTERNAL://:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:19092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      CLUSTER_ID: "4L6g3nShT-eMCtK--X86sw"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 || exit 1
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ============================================
+  # Redis - In-memory data store
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: redis-cli ping || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ============================================
+  # Kafka UI - Visual tool to inspect topics
+  # ============================================
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "8090:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:19092
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  # ============================================
+  # Order Service - HTTP API (Producer + gRPC client)
+  # ============================================
+  order-service:
+    build:
+      context: ..                              # Project root (where go.mod is)
+      dockerfile: cmd/order-service/Dockerfile
+    container_name: order-service
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_BROKERS: kafka:19092    # Internal Docker network address
+      KAFKA_TOPIC: orders
+      HTTP_PORT: "8080"
+      REDIS_ADDR: redis:6379              # For dashboard read-only access
+      INVENTORY_GRPC_ADDR: inventory-service:50051  # gRPC → Inventory Service
+    depends_on:
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      inventory-service:
+        condition: service_started         # Wait for inventory to be up (gRPC)
+    restart: on-failure
+
+  # ============================================
+  # Inventory Service - Kafka Consumer + gRPC Server
+  # ============================================
+  inventory-service:
+    build:
+      context: ..
+      dockerfile: cmd/inventory-service/Dockerfile
+    container_name: inventory-service
+    ports:
+      - "50051:50051"                      # Expose gRPC port (for local debugging)
+    environment:
+      KAFKA_BROKERS: kafka:19092    # Internal Docker network address
+      KAFKA_TOPIC: orders
+      KAFKA_GROUP_ID: inventory-service
+      REDIS_ADDR: redis:6379        # Internal Docker network address
+      GRPC_PORT: "50051"            # gRPC server port
+    depends_on:
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: on-failure
+
+volumes:
+  kafka_data:
+  redis_data:
